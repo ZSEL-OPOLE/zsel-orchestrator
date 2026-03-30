@@ -222,7 +222,231 @@ async def tool_http_request(args: dict[str, Any]) -> ToolResult:
         return ToolResult(tool="http", success=False, output="", error=str(e))
 
 
-# ── Tool Registry ─────────────────────────────────────────────────────────
+async def tool_write_file(args: dict[str, Any]) -> ToolResult:
+    """Write content to a file within the workspace. Creates intermediate dirs if needed."""
+    import os
+    start = time.time()
+    path = args.get("path", "").strip()
+    content = args.get("content", "")
+    if not path:
+        return ToolResult(tool="write_file", success=False, output="", error="No path specified")
+
+    workspace = os.environ.get("ORCH_WORKSPACE_ROOT", "/workspace")
+    abs_path = os.path.abspath(path)
+    # Security: only allow writing inside workspace
+    if not abs_path.startswith(workspace):
+        return ToolResult(tool="write_file", success=False, output="", error=f"Path outside workspace: {path}")
+
+    # Block writing to sensitive files
+    blocked_paths = ("/etc/", "/usr/", "/bin/", "/sbin/", "/lib/", "/proc/", "/sys/")
+    if any(abs_path.startswith(p) for p in blocked_paths):
+        return ToolResult(tool="write_file", success=False, output="", error=f"Path not allowed: {abs_path}")
+
+    try:
+        os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        duration = (time.time() - start) * 1000
+        return ToolResult(
+            tool="write_file",
+            success=True,
+            output=f"Written {len(content)} bytes to {abs_path}",
+            duration_ms=duration,
+        )
+    except (PermissionError, OSError) as e:
+        return ToolResult(tool="write_file", success=False, output="", error=str(e))
+
+
+async def tool_git_commit_push(args: dict[str, Any]) -> ToolResult:
+    """
+    Stage, commit, and push changes in a git repo.
+    Requires ORCH_GIT_TOKEN env var for authentication.
+
+    Args:
+        repo_dir: absolute path to the git repo
+        files: list of files to stage (default: '.' for all)
+        message: commit message
+        branch: branch to push to (default: 'main')
+    """
+    import os
+    start = time.time()
+    repo_dir = args.get("repo_dir", "").strip()
+    message = args.get("message", "chore: auto-update by orchestrator").strip()
+    branch = args.get("branch", "main").strip()
+    files = args.get("files", ["."])
+
+    if not repo_dir:
+        return ToolResult(tool="git_commit_push", success=False, output="", error="Need 'repo_dir'")
+
+    token = os.environ.get("ORCH_GIT_TOKEN", "")
+    if not token:
+        return ToolResult(tool="git_commit_push", success=False, output="", error="ORCH_GIT_TOKEN not set")
+
+    # Validate branch name (prevent injection)
+    if not re.match(r'^[a-zA-Z0-9/_.-]+$', branch):
+        return ToolResult(tool="git_commit_push", success=False, output="", error="Invalid branch name")
+
+    # Configure git identity for the commit
+    config_cmds = [
+        ["git", "config", "user.email", "orchestrator@zsel.opole.pl"],
+        ["git", "config", "user.name", "ZSEL Orchestrator"],
+    ]
+    results = []
+    for cmd in config_cmds:
+        out, err, code = await _run_command(cmd, timeout=10.0, cwd=repo_dir)
+        if code != 0:
+            return ToolResult(tool="git_commit_push", success=False, output="", error=f"git config failed: {err}")
+
+    # Stage files
+    file_args = files if isinstance(files, list) else [files]
+    add_cmd = ["git", "add"] + file_args
+    out, err, code = await _run_command(add_cmd, timeout=15.0, cwd=repo_dir)
+    if code != 0:
+        return ToolResult(tool="git_commit_push", success=False, output=out, error=f"git add failed: {err}")
+    results.append(f"git add: {out or 'ok'}")
+
+    # Check if anything is staged
+    status_out, _, _ = await _run_command(["git", "status", "--porcelain"], timeout=10.0, cwd=repo_dir)
+    if not status_out.strip():
+        return ToolResult(tool="git_commit_push", success=True, output="Nothing to commit — working tree clean", duration_ms=(time.time() - start) * 1000)
+
+    # Commit
+    out, err, code = await _run_command(["git", "commit", "-m", message], timeout=15.0, cwd=repo_dir)
+    if code != 0:
+        return ToolResult(tool="git_commit_push", success=False, output=out, error=f"git commit failed: {err}")
+    results.append(f"git commit: {out[:200]}")
+
+    # Push with token — inject token into remote URL temporarily
+    remote_out, _, _ = await _run_command(["git", "remote", "get-url", "origin"], timeout=10.0, cwd=repo_dir)
+    original_remote = remote_out.strip()
+
+    # Build authenticated remote URL (https://token@github.com/...)
+    if "github.com" in original_remote:
+        authed_remote = original_remote.replace("https://", f"https://{token}@")
+        if not authed_remote.startswith("https://"):
+            # SSH remote — convert to HTTPS
+            authed_remote = re.sub(r"git@github\.com:", f"https://{token}@github.com/", original_remote)
+    else:
+        return ToolResult(tool="git_commit_push", success=False, output="", error="Only GitHub remotes supported")
+
+    # Push
+    out, err, code = await _run_command(
+        ["git", "push", authed_remote, f"HEAD:{branch}"],
+        timeout=60.0,
+        cwd=repo_dir,
+    )
+    duration = (time.time() - start) * 1000
+
+    if code != 0:
+        return ToolResult(tool="git_commit_push", success=False, output="\n".join(results), error=f"git push failed: {err}")
+    results.append(f"git push → {branch}: {out[:200] or 'ok'}")
+    return ToolResult(
+        tool="git_commit_push",
+        success=True,
+        output="\n".join(results),
+        duration_ms=duration,
+        metadata={"branch": branch, "message": message},
+    )
+
+
+async def tool_trigger_kaniko_build(args: dict[str, Any]) -> ToolResult:
+    """
+    Create and apply a Kubernetes Job to rebuild the orchestrator image using Kaniko.
+
+    Args:
+        image_tag: new image tag to build (e.g. '0.2.0')
+        git_repo: git repo URL (default: from env)
+        git_revision: branch/tag/sha to build (default: 'main')
+        context_subdir: subdirectory within the repo (default: 'SERVERS/zsel-orchestrator')
+    """
+    import os
+    import uuid as uuid_mod
+
+    start = time.time()
+    image_tag = args.get("image_tag", "").strip()
+    git_repo = args.get("git_repo", os.environ.get("ORCH_GIT_REPO_URL", "https://github.com/ZSEL-OPOLE/zsel-orchestrator.git"))
+    git_revision = args.get("git_revision", "main")
+    context_subdir = args.get("context_subdir", "SERVERS/zsel-orchestrator")
+
+    if not image_tag:
+        return ToolResult(tool="trigger_kaniko_build", success=False, output="", error="image_tag is required (e.g. '0.2.0')")
+
+    # Validate tag (semver-ish, no shell injection)
+    if not re.match(r'^[0-9a-zA-Z._-]+$', image_tag):
+        return ToolResult(tool="trigger_kaniko_build", success=False, output="", error="Invalid image_tag format")
+
+    registry = os.environ.get("ORCH_ZOT_REGISTRY_INTERNAL", "zot-registry.registry.svc.cluster.local:5000")
+    image_name = os.environ.get("ORCH_ORCHESTRATOR_IMAGE_NAME", "zsel-orchestrator")
+    namespace = os.environ.get("ORCH_KANIKO_NAMESPACE", "orchestrator")
+    sa = os.environ.get("ORCH_KANIKO_SERVICE_ACCOUNT", "kaniko-builder")
+    job_name = f"kaniko-orch-{image_tag.replace('.', '-')}-{str(uuid_mod.uuid4())[:6]}"
+    dest_image = f"{registry}/{image_name}:{image_tag}"
+
+    job_yaml = f"""apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {job_name}
+  namespace: {namespace}
+  labels:
+    app: kaniko-builder
+    built-by: orchestrator
+    image-tag: "{image_tag}"
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: {sa}
+      restartPolicy: Never
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+        - --context=git#{git_repo}#{git_revision}
+        - --context-sub-path={context_subdir}
+        - --dockerfile=Dockerfile
+        - --destination={dest_image}
+        - --insecure
+        - --skip-tls-verify
+        - --cache=true
+        - --cache-repo={registry}/{image_name}/cache
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+"""
+
+    # Write job YAML to a temp file and apply it
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, prefix="/tmp/kaniko-") as f:
+        f.write(job_yaml)
+        tmpfile = f.name
+
+    out, err, code = await _run_command(["kubectl", "apply", "-f", tmpfile], timeout=30.0)
+    duration = (time.time() - start) * 1000
+
+    # Clean up temp file
+    try:
+        import os as _os
+        _os.unlink(tmpfile)
+    except OSError:
+        pass
+
+    if code != 0:
+        return ToolResult(tool="trigger_kaniko_build", success=False, output=out, error=f"kubectl apply failed: {err}", duration_ms=duration)
+
+    return ToolResult(
+        tool="trigger_kaniko_build",
+        success=True,
+        output=f"Kaniko Job created: {job_name}\nDestination image: {dest_image}\n{out}",
+        duration_ms=duration,
+        metadata={"job_name": job_name, "image": dest_image, "namespace": namespace},
+    )
+
+
+
 
 
 TOOL_REGISTRY: dict[str, tuple[ToolDefinition, Callable]] = {
@@ -274,6 +498,48 @@ TOOL_REGISTRY: dict[str, tuple[ToolDefinition, Callable]] = {
             examples=["http://techbuddy-backend.techbuddy.svc.cluster.local:8080/health"],
         ),
         tool_http_request,
+    ),
+    "write_file": (
+        ToolDefinition(
+            name="write_file",
+            description="Write or overwrite a file within the workspace. Creates parent directories automatically. Only paths under ORCH_WORKSPACE_ROOT are allowed.",
+            category=ToolCategory.FILE,
+            parameters={
+                "path": "absolute path within workspace",
+                "content": "text content to write",
+            },
+            requires_approval=True,
+        ),
+        tool_write_file,
+    ),
+    "git_commit_push": (
+        ToolDefinition(
+            name="git_commit_push",
+            description="Stage, commit, and push changes to a GitHub repository. Requires ORCH_GIT_TOKEN environment variable.",
+            category=ToolCategory.GIT,
+            parameters={
+                "repo_dir": "absolute path to the git repository",
+                "message": "commit message (use conventional commits: feat:, fix:, chore:)",
+                "files": "list of files to stage, default ['.'] for all",
+                "branch": "target branch, default 'main'",
+            },
+            requires_approval=True,
+        ),
+        tool_git_commit_push,
+    ),
+    "trigger_kaniko_build": (
+        ToolDefinition(
+            name="trigger_kaniko_build",
+            description="Trigger a Kaniko Kubernetes Job to build and push the orchestrator Docker image. Use to deploy a new version after code changes.",
+            category=ToolCategory.KUBERNETES,
+            parameters={
+                "image_tag": "new image tag to build and push, e.g. '0.2.0'",
+                "git_revision": "git branch/tag/sha to build from, default 'main'",
+                "context_subdir": "subdirectory in the repo, default 'SERVERS/zsel-orchestrator'",
+            },
+            requires_approval=True,
+        ),
+        tool_trigger_kaniko_build,
     ),
 }
 

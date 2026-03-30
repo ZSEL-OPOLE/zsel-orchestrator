@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     port: int = 8080
     log_level: str = "INFO"
 
+    # --- Git / self-development ---
+    git_token: str = ""  # ORCH_GIT_TOKEN — GitHub token z repo scope
+    git_repo_url: str = "https://github.com/ZSEL-OPOLE/zsel-orchestrator.git"
+    git_repo_name: str = "ZSEL-OPOLE/zsel-orchestrator"
+    workspace_root: str = "/workspace"
+
+    # --- Container build (Kaniko) ---
+    zot_registry_internal: str = "zot-registry.registry.svc.cluster.local:5000"
+    orchestrator_image_name: str = "zsel-orchestrator"
+    kaniko_service_account: str = "kaniko-builder"
+    kaniko_namespace: str = "orchestrator"
+
     # --- Orchestrator ---
     max_task_depth: int = 5
     max_parallel_agents: int = 3

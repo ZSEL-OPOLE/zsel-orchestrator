@@ -381,3 +381,138 @@ async def get_messages(task_id: str):
         }
         for m in msgs
     ]
+
+
+# ── Self-Development ───────────────────────────────────────────────────────
+
+
+class SelfAnalyzeRequest(BaseModel):
+    focus: str = Field(
+        "Przeanalizuj logi błędów z ostatnich zadań i zaproponuj co można poprawić.",
+        description="Obszar analizy lub konkretne pytanie do self-improver agenta",
+    )
+
+
+class SelfRebuildRequest(BaseModel):
+    new_version: str = Field(..., description="Nowa wersja obrazu, np. '0.2.0'")
+    git_revision: str = Field("main", description="Branch/tag do zbudowania")
+    reason: str = Field("", description="Opis co zmieniło się w tej wersji")
+
+
+@app.post("/self/analyze")
+async def self_analyze(req: SelfAnalyzeRequest):
+    """
+    Poproś self-improver agenta o analizę kodu i zaproponowanie ulepszeń.
+    Nie modyfikuje kodu — tylko analiza i propozycje.
+    """
+    orch = get_orchestrator()
+    agent = orch.registry.get("self-improver")
+    if not agent:
+        raise HTTPException(status_code=503, detail="self-improver agent not registered")
+
+    prompt = f"""Wykonaj analizę stanu orchestratora i zaproponuj konkretne ulepszenia.
+
+Twoje zadanie:
+{req.focus}
+
+Kroki:
+1. Przejrzyj najnowsze błędy z error_journal (kubectl lub HTTP do /errors/search)
+2. Przejrzyj ostatnie zadania (GET /tasks) — które failowały?
+3. Zaproponuj konkretne zmiany kodu z przykładami
+4. NIE modyfikuj kodu teraz — tylko analiza i raport
+
+Format raportu:
+- Lista problemów (z priorytetem: KRYTYCZNY/WAŻNY/DROBNY)
+- Propozycje kodu (diff-style lub cały fragment)
+- Rekomendacja kolejnej wersji (0.x.y)"""
+
+    result = await asyncio.wait_for(
+        agent.execute(prompt),
+        timeout=300.0,
+    )
+    return {"analysis": result, "agent": "self-improver"}
+
+
+@app.post("/self/rebuild")
+async def self_rebuild(req: SelfRebuildRequest):
+    """
+    Triggeruje Kaniko Job który buduje nowy obraz orchestratora z aktualnego kodu w repo.
+    UWAGA: Wymaga że zmiany były już wcześniej spushowane do GitHub.
+    """
+    orch = get_orchestrator()
+    from .tools import execute_tool
+
+    result = await execute_tool(
+        "trigger_kaniko_build",
+        {
+            "image_tag": req.new_version,
+            "git_revision": req.git_revision,
+            "context_subdir": "SERVERS/zsel-orchestrator",
+        },
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"Kaniko Job failed: {result.error}")
+
+    # Log this as knowledge
+    kb = get_knowledge_base()
+    from .knowledge import KnowledgeEntry
+    await kb.add_knowledge(
+        KnowledgeEntry(
+            content=f"Rebuild triggered for v{req.new_version} (branch: {req.git_revision}). Reason: {req.reason or 'manual'}",
+            source="self:rebuild",
+            category="deployment",
+            tags=["rebuild", "self-improvement", f"v{req.new_version}"],
+        )
+    )
+
+    return {
+        "triggered": True,
+        "job": result.metadata.get("job_name"),
+        "image": result.metadata.get("image"),
+        "output": result.output,
+    }
+
+
+@app.post("/self/evolve")
+async def self_evolve(background_tasks: BackgroundTasks):
+    """
+    Pełna pętla samorozwoju: analiza → plan ulepszeń → implementacja → commit → rebuild.
+    Uruchamia się w tle — wynik możesz śledzić przez /tasks/{id}.
+    """
+    orch = get_orchestrator()
+    import time as _time
+
+    task_description = (
+        "Samorozwój orchestratora: "
+        "1) Przejrzyj error_journal i task_history w Qdrant. "
+        "2) Zidentyfikuj TOP-3 problemy do naprawienia. "
+        "3) Zaproponuj i zaimplementuj konkretne poprawki kodu. "
+        "4) Commituj i pushuj zmiany do main. "
+        "5) Zaraportuj co zostało zmienione i dlaczego."
+    )
+
+    from .agents import Task
+    import uuid
+    task_id = str(uuid.uuid4())
+    task = Task(
+        id=task_id,
+        description=task_description,
+        requester="self-evolve-api",
+        status="queued",
+        started_at=_time.time(),
+    )
+    orch._tasks[task_id] = task
+
+    background_tasks.add_task(
+        orch.submit_task,
+        task_description,
+        requester="self-evolve-api",
+    )
+
+    return {
+        "task_id": task_id,
+        "status": "queued",
+        "description": "Pętla samorozwoju uruchomiona w tle. Śledź przez GET /tasks/{task_id}",
+    }
+
