@@ -10,7 +10,7 @@ packages = ["zsel_orchestrator", "zsel_orchestrator.agents", "zsel_orchestrator.
 
 [project]
 name = "zsel-orchestrator"
-version = "0.1.0"
+version = "0.2.0"
 description = "ZSEL AI Company — autonomous multi-agent orchestrator with RAG knowledge base and self-improvement loop"
 requires-python = ">=3.12"
 dependencies = [
