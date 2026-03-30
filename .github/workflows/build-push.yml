@@ -54,3 +54,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Make package public
+        run: |
+          # Make the container package publicly accessible for K3s cluster pulls
+          gh api \
+            --method PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /orgs/ZSEL-OPOLE/packages/container/zsel-orchestrator \
+            -f visibility=public || echo "Note: Could not change visibility (may need org admin)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
