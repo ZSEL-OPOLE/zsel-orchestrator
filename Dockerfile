@@ -17,7 +17,6 @@ RUN groupadd -r orch && useradd -r -g orch -d /app -s /sbin/nologin orch
 
 WORKDIR /app
 COPY --from=builder /install /usr/local
-COPY src/ src/
 
 # Healthcheck using internal /health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
@@ -30,4 +29,4 @@ USER orch
 ENV PYTHONUNBUFFERED=1
 ENV ORCH_LOCAL_MODE=false
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"]
+CMD ["uvicorn", "zsel_orchestrator.main:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"]
