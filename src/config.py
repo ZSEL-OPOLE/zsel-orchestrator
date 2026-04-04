@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     kaniko_service_account: str = "kaniko-builder"
     kaniko_namespace: str = "orchestrator"
 
+    # --- Health Aggregator (internal K8s service URLs) ---
+    health_url_techbuddy: str = "http://techbuddy-backend.techbuddy.svc.cluster.local:8000/api/v1/health"
+    health_url_servicedesk: str = "http://servicedesk.servicedesk.svc.cluster.local:8000/api/v1/health"
+    health_url_keycloak: str = "http://keycloak-http.keycloak.svc.cluster.local:8080/health/ready"
+    health_url_moodle: str = "http://moodle.moodle.svc.cluster.local:8080/admin/tool/health/"
+    health_url_nextcloud: str = "http://nextcloud.nextcloud.svc.cluster.local:8080/status.php"
+    health_url_stalwart: str = "http://stalwart.stalwart.svc.cluster.local:8080/healthz"
+    health_url_argocd: str = "http://argocd-server.argocd.svc.cluster.local:8080/healthz"
+    health_url_grafana: str = "http://grafana.monitoring.svc.cluster.local:3000/api/health"
+
     # --- Orchestrator ---
     max_task_depth: int = 5
     max_parallel_agents: int = 3

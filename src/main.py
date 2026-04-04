@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .orchestrator import get_orchestrator
 from .knowledge import KnowledgeEntry, ErrorEntry, get_knowledge_base
+from .health import get_health_aggregator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,8 +26,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     orch = get_orchestrator()
     await orch.initialize()
+    health = get_health_aggregator()
+    await health.start()
     logger.info("Orchestrator ready: %d agents", orch.registry.count)
     yield
+    await health.stop()
     await orch.close()
 
 
@@ -101,6 +105,30 @@ async def ready():
         "ready": orch._running,
         "agents": orch.registry.count,
     }
+
+
+@app.get("/health/services")
+async def health_services():
+    """Consolidated health of all ZSEL services."""
+    ha = get_health_aggregator()
+    return ha.get_all()
+
+
+@app.get("/health/services/unhealthy")
+async def health_unhealthy():
+    """Only unhealthy/degraded services."""
+    ha = get_health_aggregator()
+    return {"unhealthy": ha.get_unhealthy()}
+
+
+@app.get("/health/services/{service_name}")
+async def health_service(service_name: str):
+    """Health of a specific service."""
+    ha = get_health_aggregator()
+    result = ha.get_service(service_name)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
+    return result
 
 
 @app.get("/status")
