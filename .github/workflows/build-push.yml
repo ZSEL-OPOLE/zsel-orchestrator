@@ -1,30 +1,89 @@
-name: Build and Push Docker Image
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  ZSEL Orchestrator — CI/CD Pipeline                                         ║
+# ║  push to main → lint → build (arm64) → gitops → verify                      ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# Wymagane sekrety w repo (Settings → Secrets → Actions):
+#   GITOPS_DEPLOY_PAT  — PAT z scope repo na ZSEL-OPOLE/gitops-infra
+#
+# Schemat przepływu:
+#   ┌──────────┐   ┌──────────────────────┐   ┌──────────────────┐   ┌──────────┐
+#   │ 🔍 Lint  │──▶│ 🐳 Build arm64 image │──▶│ 📝 Update GitOps │──▶│ ✅ Verify│
+#   │ ubuntu   │   │ ubuntu (QEMU arm64)  │   │ gitops-infra     │   │ health   │
+#   └──────────┘   └──────────────────────┘   └──────────────────┘   └──────────┘
+
+name: "🚀 CI/CD — ZSEL Orchestrator"
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: ghcr.io/zsel-opole/zsel-orchestrator
+concurrency:
+  group: orchestrator-${{ github.ref }}
+  cancel-in-progress: true
 
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io/zsel-opole
+  IMAGE_NAME: zsel-orchestrator
+  GITOPS_REPO: ZSEL-OPOLE/gitops-infra
+  GITOPS_MANIFEST: 06-apps/manifests/zsel-orchestrator/orchestrator.yaml
+  HEALTH_URL: https://orchestrator.zsel.opole.pl/health
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lint & Security Scan
+# ═══════════════════════════════════════════════════════════════════════════════
 jobs:
-  build-and-push:
+  lint:
+    name: "🔍 Lint & Security"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dev dependencies
+        run: pip install --upgrade pip && pip install '.[dev]' ruff bandit pip-audit
+
+      - name: Ruff lint
+        run: ruff check src/ --output-format=github
+
+      - name: Ruff format check
+        run: ruff format src/ --check --diff
+
+      - name: Bandit security scan
+        run: bandit -r src/ -ll -ii --skip B101
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Build Docker Image (arm64 for K3s cluster)
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: "🐳 Build & Push Docker (arm64 → ghcr.io)"
+    runs-on: ubuntu-latest
+    needs: [lint]
+    if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+      full_image: ${{ steps.tag.outputs.full_image }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Set up QEMU (arm64)
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -33,36 +92,130 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=0.1.0,enable=${{ github.ref == 'refs/heads/main' }}
+          platforms: arm64
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+
+      - name: Generate image tag
+        id: tag
+        run: |
+          TAG="$(date +%Y%m%d)-${GITHUB_SHA::8}"
+          FULL="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "full_image=${FULL}" >> "$GITHUB_OUTPUT"
+          echo "📦 Image: ${FULL}"
+
+      - name: Build and push arm64 image
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Make package public
+      - name: "🔍 Trivy scan (CRITICAL/HIGH)"
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+        continue-on-error: true
+
+      - name: "📝 Build Summary"
         run: |
-          # Make the container package publicly accessible for K3s cluster pulls
-          gh api \
-            --method PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            /orgs/ZSEL-OPOLE/packages/container/zsel-orchestrator \
-            -f visibility=public || echo "Note: Could not change visibility (may need org admin)"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "### 🐳 Docker Build (ZSEL Orchestrator)" >> $GITHUB_STEP_SUMMARY
+          echo "| Klucz | Wartość |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ steps.tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ steps.tag.outputs.full_image }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | \`linux/arm64\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Update GitOps manifest (ArgoCD auto-sync)
+  # ═══════════════════════════════════════════════════════════════════════════
+  gitops-update:
+    name: "📦 Update GitOps manifest"
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout gitops-infra repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_DEPLOY_PAT }}
+          path: gitops-infra
+
+      - name: Update image tag in manifest
+        run: |
+          FULL_IMAGE="${{ needs.build.outputs.full_image }}"
+          MANIFEST="gitops-infra/${{ env.GITOPS_MANIFEST }}"
+
+          sed -i "s|image: .*/zsel-orchestrator:.*|image: ${FULL_IMAGE}|" "$MANIFEST"
+
+          echo "Updated manifest to: ${FULL_IMAGE}"
+          grep 'image:.*zsel-orchestrator' "$MANIFEST" | head -3
+
+      - name: Commit and push
+        run: |
+          cd gitops-infra
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ env.GITOPS_MANIFEST }}"
+          git diff --cached --quiet || git commit -m "ci(orchestrator): update image to ${{ needs.build.outputs.image_tag }}
+
+          Automated by CI/CD pipeline.
+          Source: https://github.com/${{ github.repository }}/commit/${{ github.sha }}"
+          git push
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Health Check (po ArgoCD sync)
+  # ═══════════════════════════════════════════════════════════════════════════
+  verify:
+    name: "✅ Health Check"
+    runs-on: ubuntu-latest
+    needs: [gitops-update, build]
+    timeout-minutes: 5
+    steps:
+      - name: Wait for ArgoCD sync (~60s)
+        run: sleep 60
+
+      - name: Health check — orchestrator.zsel.opole.pl
+        id: health
+        run: |
+          echo "Sprawdzanie: ${{ env.HEALTH_URL }}"
+          for i in $(seq 1 10); do
+            HTTP=$(curl -o /dev/null -sS -w "%{http_code}" --max-time 10 "${{ env.HEALTH_URL }}" 2>/dev/null || echo "000")
+            echo "  Próba ${i}/10: HTTP ${HTTP}"
+            if [ "${HTTP}" = "200" ]; then
+              echo "status=ok" >> $GITHUB_OUTPUT
+              echo "http_code=${HTTP}" >> $GITHUB_OUTPUT
+              break
+            fi
+            [ "$i" -lt "10" ] && sleep 15
+          done
+          if [ "${HTTP}" != "200" ]; then
+            echo "status=timeout" >> $GITHUB_OUTPUT
+            echo "http_code=${HTTP}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: "📝 Deployment Summary"
+        run: |
+          echo "### ✅ Deployment Summary (ZSEL Orchestrator)" >> $GITHUB_STEP_SUMMARY
+          echo "| Klucz | Wartość |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Wersja | \`${{ needs.build.outputs.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health | \`${{ steps.health.outputs.http_code }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | [${{ env.HEALTH_URL }}](${{ env.HEALTH_URL }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| ArgoCD | [orchestrator](https://argocd.zsel.opole.pl/applications/orchestrator) |" >> $GITHUB_STEP_SUMMARY
