@@ -182,9 +182,7 @@ class KnowledgeBase:
 
         query_filter = None
         if category:
-            query_filter = models.Filter(
-                must=[models.FieldCondition(key="category", match=models.MatchValue(value=category))]
-            )
+            query_filter = models.Filter(must=[models.FieldCondition(key="category", match=models.MatchValue(value=category))])
 
         results = await self._client.query_points(
             collection_name=self._collections["knowledge"],
@@ -221,9 +219,7 @@ class KnowledgeBase:
             return ""
         await self._client.upsert(
             collection_name=self._collections["errors"],
-            points=[
-                models.PointStruct(id=entry.id, vector=vector, payload=entry.to_payload())
-            ],
+            points=[models.PointStruct(id=entry.id, vector=vector, payload=entry.to_payload())],
         )
         self._stats["errors_logged"] += 1
         logger.info("Error logged: %s (agent=%s, resolved=%s)", entry.error_message[:80], entry.agent, entry.resolved)
@@ -333,10 +329,7 @@ class KnowledgeBase:
             limit=limit,
             score_threshold=0.4,
         )
-        return [
-            {**p.payload, "id": str(p.id), "similarity": p.score}
-            for p in results.points
-        ]
+        return [{**p.payload, "id": str(p.id), "similarity": p.score} for p in results.points]
 
     # ── Agent Memory ──────────────────────────────────────────────────────
 
@@ -372,16 +365,11 @@ class KnowledgeBase:
         results = await self._client.query_points(
             collection_name=self._collections["agents"],
             query=vector,
-            query_filter=models.Filter(
-                must=[models.FieldCondition(key="agent", match=models.MatchValue(value=agent_name))]
-            ),
+            query_filter=models.Filter(must=[models.FieldCondition(key="agent", match=models.MatchValue(value=agent_name))]),
             limit=limit,
             score_threshold=0.3,
         )
-        return [
-            {**p.payload, "similarity": p.score}
-            for p in results.points
-        ]
+        return [{**p.payload, "similarity": p.score} for p in results.points]
 
     # ── Stats ─────────────────────────────────────────────────────────────
 

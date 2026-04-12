@@ -7,14 +7,14 @@ Tools are sandboxed — they validate inputs and log all executions.
 """
 
 import asyncio
-import json
 import logging
 import re
 import shlex
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def _run_command(cmd: list[str], *, timeout: float = 30.0, cwd: str | None
         out = stdout.decode("utf-8", errors="replace")[:MAX_OUTPUT_BYTES]
         err = stderr.decode("utf-8", errors="replace")[:MAX_OUTPUT_BYTES]
         return out, err, proc.returncode or 0
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return "", f"Command timed out after {timeout}s", -1
     except FileNotFoundError:
@@ -172,6 +172,7 @@ async def tool_read_file(args: dict[str, Any]) -> ToolResult:
 
     # Security: only allow reading from workspace
     import os
+
     workspace = os.environ.get("ORCH_WORKSPACE_ROOT", "/workspace")
     abs_path = os.path.abspath(path)
     if not abs_path.startswith(workspace) and not abs_path.startswith("/tmp"):
@@ -225,6 +226,7 @@ async def tool_http_request(args: dict[str, Any]) -> ToolResult:
 async def tool_write_file(args: dict[str, Any]) -> ToolResult:
     """Write content to a file within the workspace. Creates intermediate dirs if needed."""
     import os
+
     start = time.time()
     path = args.get("path", "").strip()
     content = args.get("content", "")
@@ -269,6 +271,7 @@ async def tool_git_commit_push(args: dict[str, Any]) -> ToolResult:
         branch: branch to push to (default: 'main')
     """
     import os
+
     start = time.time()
     repo_dir = args.get("repo_dir", "").strip()
     message = args.get("message", "chore: auto-update by orchestrator").strip()
@@ -283,7 +286,7 @@ async def tool_git_commit_push(args: dict[str, Any]) -> ToolResult:
         return ToolResult(tool="git_commit_push", success=False, output="", error="ORCH_GIT_TOKEN not set")
 
     # Validate branch name (prevent injection)
-    if not re.match(r'^[a-zA-Z0-9/_.-]+$', branch):
+    if not re.match(r"^[a-zA-Z0-9/_.-]+$", branch):
         return ToolResult(tool="git_commit_push", success=False, output="", error="Invalid branch name")
 
     # Configure git identity for the commit
@@ -372,7 +375,7 @@ async def tool_trigger_kaniko_build(args: dict[str, Any]) -> ToolResult:
         return ToolResult(tool="trigger_kaniko_build", success=False, output="", error="image_tag is required (e.g. '0.2.0')")
 
     # Validate tag (semver-ish, no shell injection)
-    if not re.match(r'^[0-9a-zA-Z._-]+$', image_tag):
+    if not re.match(r"^[0-9a-zA-Z._-]+$", image_tag):
         return ToolResult(tool="trigger_kaniko_build", success=False, output="", error="Invalid image_tag format")
 
     registry = os.environ.get("ORCH_ZOT_REGISTRY_INTERNAL", "zot-registry.registry.svc.cluster.local:5000")
@@ -420,6 +423,7 @@ spec:
 
     # Write job YAML to a temp file and apply it
     import tempfile
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, prefix="/tmp/kaniko-") as f:
         f.write(job_yaml)
         tmpfile = f.name
@@ -430,6 +434,7 @@ spec:
     # Clean up temp file
     try:
         import os as _os
+
         _os.unlink(tmpfile)
     except OSError:
         pass
@@ -444,9 +449,6 @@ spec:
         duration_ms=duration,
         metadata={"job_name": job_name, "image": dest_image, "namespace": namespace},
     )
-
-
-
 
 
 TOOL_REGISTRY: dict[str, tuple[ToolDefinition, Callable]] = {

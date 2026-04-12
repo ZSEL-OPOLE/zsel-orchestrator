@@ -19,11 +19,11 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from dataclasses import asdict
+from typing import Any
 
 from .agents import (
-    Agent,
     AgentFactory,
     AgentMessage,
     AgentRegistry,
@@ -79,10 +79,7 @@ class TaskPlanner:
             for k in knowledge:
                 infra_context += f"- [{k.category}] {k.content[:200]}\n"
 
-        available_agents = "\n".join(
-            f"- {a['name']}: {a['description']} (capabilities: {', '.join(a['capabilities'])})"
-            for a in self._registry.list_agents()
-        )
+        available_agents = "\n".join(f"- {a['name']}: {a['description']} (capabilities: {', '.join(a['capabilities'])})" for a in self._registry.list_agents())
 
         prompt = f"""Jesteś Planner w autonomicznej firmie AI. Stwórz PRECYZYJNY plan wykonania poniższego zadania.
 
@@ -134,6 +131,7 @@ class TaskPlanner:
         """Extract steps from LLM response."""
         # Try to extract JSON from response
         import re
+
         json_match = re.search(r'\{[\s\S]*"steps"[\s\S]*\}', response)
         if not json_match:
             # Fallback: single step
@@ -180,9 +178,7 @@ class TaskExecutor:
         self._registry = registry
         self._bus = bus
 
-    async def execute_plan(
-        self, task: Task, *, on_update: Any = None
-    ) -> str:
+    async def execute_plan(self, task: Task, *, on_update: Any = None) -> str:
         """Execute all steps, respecting dependencies. Returns final result."""
         completed: dict[str, str] = {}  # step_id -> result
         failed: dict[str, str] = {}  # step_id -> error
@@ -199,11 +195,7 @@ class TaskExecutor:
                 break
 
             # Find steps that can run now (all deps completed)
-            ready = [
-                s for s in pending
-                if all(dep in completed for dep in s.dependencies)
-                and s.id not in failed
-            ]
+            ready = [s for s in pending if all(dep in completed for dep in s.dependencies) and s.id not in failed]
 
             if not ready:
                 # All remaining steps have failed deps
@@ -309,7 +301,7 @@ class TaskExecutor:
                 )
             )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "ERROR: Step execution timed out (5min)"
         except Exception as e:
             return f"ERROR: {e}"
@@ -343,11 +335,7 @@ class SelfImprovementLoop:
         # Gather task data
         steps_summary = []
         for s in task.steps:
-            steps_summary.append(
-                f"- [{s.status}] {s.agent}: {s.description[:100]}"
-                + (f"\n  Result: {s.result[:200]}" if s.result else "")
-                + (f"\n  Error: {s.error}" if s.error else "")
-            )
+            steps_summary.append(f"- [{s.status}] {s.agent}: {s.description[:100]}" + (f"\n  Result: {s.result[:200]}" if s.result else "") + (f"\n  Error: {s.error}" if s.error else ""))
 
         analysis_prompt = f"""Analizuj zakończone zadanie i wyciągnij wnioski.
 
@@ -375,6 +363,7 @@ class SelfImprovementLoop:
 
         # Parse analysis
         import re
+
         json_match = re.search(r'\{[\s\S]*"success"[\s\S]*\}', response)
         learnings = ""
         knowledge_items = []
@@ -432,7 +421,9 @@ class SelfImprovementLoop:
 
         logger.info(
             "Self-improvement: task %s processed. Knowledge items: %d, Learnings: %s",
-            task.id, len(knowledge_items), learnings[:80],
+            task.id,
+            len(knowledge_items),
+            learnings[:80],
         )
         return learnings
 
@@ -516,9 +507,7 @@ class Orchestrator:
 
             # 3. Self-improve
             if get_settings().learning_enabled:
-                task.learnings = await self.improvement.process_completed_task(
-                    task, self.factory, self.registry
-                )
+                task.learnings = await self.improvement.process_completed_task(task, self.factory, self.registry)
 
         except Exception as e:
             logger.error("Task %s failed with exception: %s", task.id, e)
@@ -537,9 +526,7 @@ class Orchestrator:
 
         return task
 
-    async def stream_task(
-        self, description: str, *, requester: str = "user"
-    ) -> AsyncIterator[dict]:
+    async def stream_task(self, description: str, *, requester: str = "user") -> AsyncIterator[dict]:
         """
         Submit and stream task progress as SSE events.
         Yields dicts with 'type', 'data'.
@@ -563,7 +550,7 @@ class Orchestrator:
                 yield update
                 if update.get("type") == "completed":
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield {"type": "error", "data": "Task timeout"}
                 break
 
@@ -588,6 +575,7 @@ class Orchestrator:
     ) -> str:
         """Spawn a new specialized agent dynamically."""
         from .agents import AgentRole as AR
+
         try:
             role_enum = AR(role)
         except ValueError:

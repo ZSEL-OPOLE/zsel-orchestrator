@@ -14,7 +14,6 @@ Duplikaty wykrywane przez SHA256 hash.
 import asyncio
 import hashlib
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -30,24 +29,63 @@ CHUNK_OVERLAP = 200
 
 # Files/dirs to skip
 SKIP_DIRS = {
-    ".git", "__pycache__", "node_modules", ".next", ".venv", "venv",
-    "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    "alembic/versions", "migrations", ".idea", ".vscode",
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".next",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "alembic/versions",
+    "migrations",
+    ".idea",
+    ".vscode",
 }
 
 SKIP_EXTENSIONS = {
-    ".pyc", ".pyo", ".pyd", ".so", ".dylib", ".dll", ".exe",
-    ".jpg", ".jpeg", ".png", ".gif", ".ico", ".svg", ".woff", ".woff2",
-    ".pdf", ".zip", ".tar", ".gz", ".tgz",
+    ".pyc",
+    ".pyo",
+    ".pyd",
+    ".so",
+    ".dylib",
+    ".dll",
+    ".exe",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".ico",
+    ".svg",
+    ".woff",
+    ".woff2",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".tgz",
     ".lock",  # package-lock, poetry.lock — noisy
 }
 
 PRIORITY_EXTENSIONS = {
-    ".yaml", ".yml", ".json", ".toml",  # Infra configs
-    ".py", ".ts", ".tsx", ".js",  # Code
-    ".md", ".txt",  # Docs
-    ".sh", ".bash",  # Scripts
-    ".conf", ".cfg", ".ini",  # Config files
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",  # Infra configs
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",  # Code
+    ".md",
+    ".txt",  # Docs
+    ".sh",
+    ".bash",  # Scripts
+    ".conf",
+    ".cfg",
+    ".ini",  # Config files
     ".rsc",  # MikroTik RouterOS scripts
     ".env.example",  # Env templates
 }
@@ -119,7 +157,7 @@ async def run_ingestion(workspace: str, *, force: bool = False, console: Any = N
     Walks workspace, indexes all relevant files into Qdrant.
     Returns stats dict.
     """
-    from .knowledge import get_knowledge_base, KnowledgeEntry
+    from .knowledge import KnowledgeEntry, get_knowledge_base
     from .orchestrator import get_orchestrator
 
     orch = get_orchestrator()
@@ -194,7 +232,7 @@ async def run_ingestion(workspace: str, *, force: bool = False, console: Any = N
             chunk_id = f"{_file_hash(rel_path)}-{i}"
 
             # Add source context to chunk
-            source_header = f"# File: {rel_path}\n# Chunk: {i+1}/{len(chunks)}\n\n"
+            source_header = f"# File: {rel_path}\n# Chunk: {i + 1}/{len(chunks)}\n\n"
             content = source_header + chunk
 
             try:
@@ -224,7 +262,7 @@ async def run_ingestion(workspace: str, *, force: bool = False, console: Any = N
     stats["duration_s"] = time.time() - stats["start_time"]
     await orch.close()
 
-    log(f"[bold green]✅ Ingestion complete:[/bold green]")
+    log("[bold green]✅ Ingestion complete:[/bold green]")
     log(f"  Files scanned: {stats['files_scanned']}")
     log(f"  Files indexed: {stats['files_indexed']}")
     log(f"  Chunks created: {stats['chunks_created']}")
@@ -401,5 +439,6 @@ Realm: ZSEL.OPOLE.PL, Keycloak OIDC (auth.zsel.opole.pl)""",
 
 if __name__ == "__main__":
     import sys
+
     workspace = sys.argv[1] if len(sys.argv) > 1 else "/workspace"
     asyncio.run(run_ingestion(workspace))

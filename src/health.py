@@ -8,7 +8,7 @@ Results are cached in-memory and optionally in Redis.
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -57,6 +57,7 @@ class ServiceHealth:
 
 
 # ── Service definitions ───────────────────────────────────────────────────
+
 
 def _build_service_checks() -> list[dict[str, str]]:
     """Build the list of services to check from config / known internal URLs."""
@@ -261,11 +262,7 @@ class HealthAggregator:
 
     def get_unhealthy(self) -> list[dict[str, Any]]:
         """Get only unhealthy services."""
-        return [
-            r.to_dict()
-            for r in self._results.values()
-            if r.status in (ServiceStatus.UNHEALTHY, ServiceStatus.DEGRADED, ServiceStatus.UNKNOWN)
-        ]
+        return [r.to_dict() for r in self._results.values() if r.status in (ServiceStatus.UNHEALTHY, ServiceStatus.DEGRADED, ServiceStatus.UNKNOWN)]
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────

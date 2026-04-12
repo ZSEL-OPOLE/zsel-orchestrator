@@ -12,8 +12,6 @@ Użycie:
 
 import asyncio
 import json
-import sys
-from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -21,7 +19,6 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich import print as rprint
 
 app = typer.Typer(
     name="orchestrator",
@@ -33,12 +30,14 @@ console = Console()
 
 def _get_base_url() -> str:
     import os
+
     return os.environ.get("ORCH_API_URL", "http://localhost:8080")
 
 
 def _local_mode() -> bool:
     """Check if we're running in local (in-process) mode vs API mode."""
     import os
+
     return os.environ.get("ORCH_LOCAL_MODE", "true").lower() == "true"
 
 
@@ -92,6 +91,7 @@ def task(
         result = asyncio.run(_run_task_local(description, requester=requester))
     else:
         import httpx
+
         url = _get_base_url()
         endpoint = "/tasks/sync" if sync else "/tasks"
         resp = httpx.post(f"{url}{endpoint}", json={"description": description, "requester": requester}, timeout=360)
@@ -101,18 +101,22 @@ def task(
     status = result.get("status", "unknown")
     icon = "✅" if status == "completed" else "⚠️" if status == "partial" else "❌"
 
-    console.print(Panel(
-        f"[bold]{icon} Status: {status}[/bold]\n\n{result.get('result', '')[:2000]}",
-        border_style="green" if status == "completed" else "red",
-        title=f"Wynik (task_id: {result.get('id', '?')})",
-    ))
+    console.print(
+        Panel(
+            f"[bold]{icon} Status: {status}[/bold]\n\n{result.get('result', '')[:2000]}",
+            border_style="green" if status == "completed" else "red",
+            title=f"Wynik (task_id: {result.get('id', '?')})",
+        )
+    )
 
     if result.get("learnings"):
-        console.print(Panel(
-            f"[italic]{result['learnings']}[/italic]",
-            title="💡 Learnings (zapisano do Qdrant)",
-            border_style="blue",
-        ))
+        console.print(
+            Panel(
+                f"[italic]{result['learnings']}[/italic]",
+                title="💡 Learnings (zapisano do Qdrant)",
+                border_style="blue",
+            )
+        )
 
 
 @app.command()
@@ -127,6 +131,7 @@ def chat(
     async def run():
         if _local_mode():
             from .orchestrator import get_orchestrator
+
             orch = get_orchestrator()
             await orch.initialize()
             result = await orch.chat_with_agent(agent_name, message, task_id=task_id)
@@ -134,6 +139,7 @@ def chat(
             return result
         else:
             import httpx
+
             resp = httpx.post(
                 f"{_get_base_url()}/agents/{agent_name}/chat",
                 json={"agent": agent_name, "message": message, "task_id": task_id},
@@ -153,6 +159,7 @@ def agents():
     async def run():
         if _local_mode():
             from .orchestrator import get_orchestrator
+
             orch = get_orchestrator()
             await orch.initialize()
             data = orch.registry.list_agents()
@@ -160,6 +167,7 @@ def agents():
             return data
         else:
             import httpx
+
             resp = httpx.get(f"{_get_base_url()}/agents")
             return resp.json()
 
@@ -191,6 +199,7 @@ def status():
     async def run():
         if _local_mode():
             from .orchestrator import get_orchestrator
+
             orch = get_orchestrator()
             await orch.initialize()
             data = await orch.get_status()
@@ -198,6 +207,7 @@ def status():
             return data
         else:
             import httpx
+
             resp = httpx.get(f"{_get_base_url()}/status")
             return resp.json()
 
@@ -266,10 +276,11 @@ def knowledge(
     async def run():
         if _local_mode():
             from .orchestrator import get_orchestrator
+
             orch = get_orchestrator()
             await orch.initialize()
-            kb = orch.registry._agents  # Access through orch
             from .knowledge import get_knowledge_base as _get_kb
+
             _kb = _get_kb()
 
             if subcommand == "search" and query:
@@ -315,8 +326,9 @@ def errors(
 
     async def run():
         if _local_mode():
-            from .orchestrator import get_orchestrator
             from .knowledge import get_knowledge_base as _get_kb
+            from .orchestrator import get_orchestrator
+
             orch = get_orchestrator()
             await orch.initialize()
             _kb = _get_kb()
@@ -356,6 +368,7 @@ def spawn(
     async def run():
         if _local_mode():
             from .orchestrator import get_orchestrator
+
             orch = get_orchestrator()
             await orch.initialize()
             caps = [c.strip() for c in capabilities.split(",") if c.strip()] if capabilities else []

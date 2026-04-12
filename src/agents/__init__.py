@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from ..knowledge import get_knowledge_base
 from ..llm import get_llm
-from ..knowledge import get_knowledge_base, KnowledgeEntry, ErrorEntry
-from ..tools import execute_tool, get_tool_definitions, ToolResult
+from ..tools import execute_tool, get_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,6 @@ class Agent:
 
     async def execute(self, task_description: str, *, context: str = "") -> str:
         """Execute a task and return the result."""
-        llm = get_llm()
         kb = get_knowledge_base()
 
         # 1. Recall relevant memories
@@ -197,7 +196,7 @@ class Agent:
         """Execute with tool-calling loop — agent can call tools and continue reasoning."""
         llm = get_llm()
 
-        for iteration in range(max_iterations):
+        for _ in range(max_iterations):
             response = await llm.chat(messages, model=self.defn.preferred_model, temperature=0.3)
 
             # Check if the response contains tool calls (JSON blocks)
@@ -225,6 +224,7 @@ class Agent:
         """Extract tool calls from agent response. Format: ```tool:name\n{json_args}```"""
         calls = []
         import re
+
         pattern = r"```tool:(\w+)\s*\n(.*?)```"
         for match in re.finditer(pattern, text, re.DOTALL):
             tool_name = match.group(1)
@@ -241,7 +241,7 @@ class Agent:
         available = [t for t in tools if t.name in self.defn.tools] if self.defn.tools else tools
         if not available:
             return ""
-        text = "\n\n## Dostępne narzędzia:\nMożesz wywoływać narzędzia umieszczając je w blokach:\n```tool:nazwa\n{\"param\": \"value\"}\n```\n\n"
+        text = '\n\n## Dostępne narzędzia:\nMożesz wywoływać narzędzia umieszczając je w blokach:\n```tool:nazwa\n{"param": "value"}\n```\n\n'
         for t in available:
             params = ", ".join(f"{k}: {v}" for k, v in t.parameters.items())
             text += f"- **{t.name}**: {t.description}\n  Parametry: {params}\n"
@@ -321,7 +321,10 @@ class MessageBus:
 
         logger.info(
             "Message %s→%s [%s]: %s",
-            message.from_agent, message.to_agent, message.msg_type.value, message.content[:80],
+            message.from_agent,
+            message.to_agent,
+            message.msg_type.value,
+            message.content[:80],
         )
 
     def subscribe(self, agent_name: str) -> asyncio.Queue:
@@ -368,7 +371,7 @@ class AgentFactory:
 - Nazwa: {name}
 - Rola: {role.value}
 - Opis: {description}
-- Umiejętności: {', '.join(capabilities)}
+- Umiejętności: {", ".join(capabilities)}
 
 System prompt powinien:
 1. Jasno określać tożsamość i specjalizację agenta
@@ -681,8 +684,12 @@ Patrz na:
 - Wolne plany (wiele kroków z jednym agentem) → nowe specjalizacje
 - Brakujące narzędzia w toolset agentów → nowe tools""",
         capabilities=[
-            "code_analysis", "self_modification", "git_operations",
-            "docker_build", "kubernetes_deploy", "continuous_improvement",
+            "code_analysis",
+            "self_modification",
+            "git_operations",
+            "docker_build",
+            "kubernetes_deploy",
+            "continuous_improvement",
         ],
         tools=["read_file", "write_file", "git", "git_commit_push", "trigger_kaniko_build", "kubectl", "shell"],
         preferred_model="qwen3.5:27b",

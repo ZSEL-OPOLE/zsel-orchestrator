@@ -6,14 +6,14 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .orchestrator import get_orchestrator
-from .knowledge import KnowledgeEntry, ErrorEntry, get_knowledge_base
 from .health import get_health_aggregator
+from .knowledge import ErrorEntry, KnowledgeEntry, get_knowledge_base
+from .orchestrator import get_orchestrator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -144,9 +144,10 @@ async def status():
 async def submit_task(req: TaskRequest, background_tasks: BackgroundTasks):
     """Submit a task. Returns task ID immediately, execution runs in background."""
     orch = get_orchestrator()
-    from .agents import Task
-    import uuid
     import time
+    import uuid
+
+    from .agents import Task
 
     task_id = str(uuid.uuid4())
     # Create placeholder task
@@ -179,7 +180,7 @@ async def submit_task_sync(req: TaskRequest):
             timeout=300.0,
         )
         return asdict(task)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(status_code=408, detail="Task execution timed out")
 
 
@@ -467,7 +468,6 @@ async def self_rebuild(req: SelfRebuildRequest):
     Triggeruje Kaniko Job który buduje nowy obraz orchestratora z aktualnego kodu w repo.
     UWAGA: Wymaga że zmiany były już wcześniej spushowane do GitHub.
     """
-    orch = get_orchestrator()
     from .tools import execute_tool
 
     result = await execute_tool(
@@ -485,6 +485,7 @@ async def self_rebuild(req: SelfRebuildRequest):
     # Log this as knowledge
     kb = get_knowledge_base()
     from .knowledge import KnowledgeEntry
+
     await kb.add_knowledge(
         KnowledgeEntry(
             content=f"Rebuild triggered for v{req.new_version} (branch: {req.git_revision}). Reason: {req.reason or 'manual'}",
@@ -520,8 +521,10 @@ async def self_evolve(background_tasks: BackgroundTasks):
         "5) Zaraportuj co zostało zmienione i dlaczego."
     )
 
-    from .agents import Task
     import uuid
+
+    from .agents import Task
+
     task_id = str(uuid.uuid4())
     task = Task(
         id=task_id,
@@ -543,4 +546,3 @@ async def self_evolve(background_tasks: BackgroundTasks):
         "status": "queued",
         "description": "Pętla samorozwoju uruchomiona w tle. Śledź przez GET /tasks/{task_id}",
     }
-
