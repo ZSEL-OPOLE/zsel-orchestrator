@@ -175,7 +175,7 @@ async def tool_read_file(args: dict[str, Any]) -> ToolResult:
 
     workspace = os.environ.get("ORCH_WORKSPACE_ROOT", "/workspace")
     abs_path = os.path.abspath(path)
-    if not abs_path.startswith(workspace) and not abs_path.startswith("/tmp"):
+    if not abs_path.startswith(workspace) and not abs_path.startswith("/tmp"):  # nosec B108 — /tmp intentional for workspace boundary
         return ToolResult(tool="read_file", success=False, output="", error=f"Path outside workspace: {path}")
 
     try:
@@ -208,7 +208,7 @@ async def tool_http_request(args: dict[str, Any]) -> ToolResult:
         return ToolResult(tool="http", success=False, output="", error="Only internal cluster URLs allowed")
 
     try:
-        async with _httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        async with _httpx.AsyncClient(timeout=15.0, verify=False) as client:  # nosec B501 — internal cluster, self-signed certs
             resp = await client.request(method, url)
             duration = (time.time() - start) * 1000
             body = resp.text[:MAX_OUTPUT_BYTES]
@@ -424,7 +424,7 @@ spec:
     # Write job YAML to a temp file and apply it
     import tempfile
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, prefix="/tmp/kaniko-") as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, prefix="/tmp/kaniko-") as f:  # nosec B108 — /tmp intentional for kaniko job YAML
         f.write(job_yaml)
         tmpfile = f.name
 

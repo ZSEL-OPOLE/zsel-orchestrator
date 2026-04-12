@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis.cache.svc.cluster.local:6379/2"
 
     # --- Service ---
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec B104 — intentional container bind-all
     port: int = 8080
     log_level: str = "INFO"
 

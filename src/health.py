@@ -141,7 +141,7 @@ class HealthAggregator:
         self._running = True
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(CHECK_TIMEOUT_SECONDS, connect=3.0),
-            verify=False,
+            verify=False,  # nosec B501 — internal cluster TLS, self-signed certs
             follow_redirects=True,
         )
         self._task = asyncio.create_task(self._poll_loop())
