@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     learning_enabled: bool = True
     auto_index_interval: int = 3600  # seconds between auto-indexing
 
+    # --- CORS ---
+    cors_origins: list[str] = ["https://orchestrator.zsel.opole.pl"]
+
 
 @lru_cache
 def get_settings() -> Settings:
