@@ -131,13 +131,26 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Sprawdź GITOPS_PAT
+        id: pat
+        run: |
+          if [ -z "${{ secrets.GITOPS_PAT }}" ]; then
+            echo "⚠️ GITOPS_PAT nie jest skonfigurowany — pomijam GitOps update"
+            echo "⚠️ Aby włączyć: gh secret set GITOPS_PAT --org ZSEL-OPOLE --visibility all"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout gitops-infra
+        if: steps.pat.outputs.skip != 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: ${{ env.GITOPS_REPO }}
           token: ${{ secrets.GITOPS_PAT }}
 
       - name: Update image tag
+        if: steps.pat.outputs.skip != 'true'
         run: |
           TAG="${{ needs.build.outputs.tag }}"
           FILE="${{ env.GITOPS_MANIFEST }}"
@@ -151,6 +164,7 @@ jobs:
           echo "OK: ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
 
       - name: Commit & push
+        if: steps.pat.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
