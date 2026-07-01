@@ -1,0 +1,75 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# axe-core-runner — Build ARM64 image → ZOT registry
+# Runs-on: zsel-general (string, nie array — ARC v2 requirement)
+# ═══════════════════════════════════════════════════════════════════════════════
+name: Build axe-core-runner image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "axe-runner/**"
+  workflow_dispatch:
+
+concurrency:
+  group: axe-runner-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZOT_REGISTRY: 10.43.11.137:5000
+  IMAGE_NAME: zsel/axe-core-runner
+  IMAGE_VERSION: "1.0.0"
+
+jobs:
+  build:
+    name: "Build & push"
+    runs-on: zsel-general
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install crane
+        run: |
+          set -eo pipefail
+          CRANE_VER=0.20.2
+          INSTALL_DIR="${HOME}/.local/bin"
+          mkdir -p "${INSTALL_DIR}"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VER}/go-containerregistry_Linux_arm64.tar.gz" \
+            | tar -xz -C "${INSTALL_DIR}" crane
+          echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
+
+      - name: Build image (OCI, ARM64)
+        working-directory: axe-runner
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            --platform linux/arm64 \
+            --output "type=oci,dest=/tmp/axe-runner-oci.tar" \
+            --tag "${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" \
+            --no-cache \
+            .
+          echo "Build OK"
+
+      - name: Push to ZOT via crane
+        run: |
+          OCI_DIR="/tmp/axe-runner-oci-layout"
+          mkdir -p "${OCI_DIR}"
+          tar -xf /tmp/axe-runner-oci.tar -C "${OCI_DIR}"
+          crane push --insecure "${OCI_DIR}" "${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}"
+          crane push --insecure "${OCI_DIR}" "${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo "OK Pushed: ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}"
+          rm -rf /tmp/axe-runner-oci.tar "${OCI_DIR}"
+
+      - name: Verify in ZOT
+        run: |
+          crane manifest --insecure "${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" \
+            | python3 -c "import json,sys; m=json.load(sys.stdin); print(f'OK axe-core-runner — layers: {len(m.get(\"layers\", []))}')"
+
+      - name: Summary
+        run: |
+          echo "### axe-core-runner Build" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ✅ pushed |" >> $GITHUB_STEP_SUMMARY

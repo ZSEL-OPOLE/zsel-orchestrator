@@ -1,0 +1,17 @@
+{
+  "name": "axe-core-runner",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "WCAG accessibility audit runner dla ZSEL (axe-core + Playwright headless)",
+  "main": "runner.mjs",
+  "scripts": {
+    "start": "node runner.mjs"
+  },
+  "dependencies": {
+    "axe-core": "^4.10.0",
+    "playwright-core": "^1.48.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
