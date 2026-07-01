@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "ORCH_"}
 
     # --- LLM (Ollama) ---
-    ollama_base_url: str = "http://ollama.llm.svc.cluster.local:11434"
+    ollama_base_url: str = "http://ollama-cluster.ai.svc.cluster.local:11434"
     ollama_think_model: str = "qwen3.5:27b"
     ollama_fast_model: str = "qwen3.5:9b"
     ollama_embed_model: str = "nomic-embed-text"
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     ollama_timeout: float = 120.0
 
     # --- Vector DB (Qdrant) ---
-    qdrant_host: str = "qdrant.qdrant.svc.cluster.local"
+    qdrant_host: str = "qdrant.legal-rag.svc.cluster.local"
     qdrant_port: int = 6333
     qdrant_collection_knowledge: str = "orch_knowledge"
     qdrant_collection_errors: str = "orch_error_journal"
@@ -44,18 +44,17 @@ class Settings(BaseSettings):
     workspace_root: str = "/workspace"
 
     # --- Container build (Kaniko) ---
-    zot_registry_internal: str = "zot-registry.registry.svc.cluster.local:5000"
-    orchestrator_image_name: str = "zsel-orchestrator"
+    zot_registry_internal: str = "10.43.11.137:5000"
+    orchestrator_image_name: str = "zsel/orchestrator"
     kaniko_service_account: str = "kaniko-builder"
-    kaniko_namespace: str = "orchestrator"
+    kaniko_namespace: str = "zsel-orchestrator"
 
     # --- Health Aggregator (internal K8s service URLs) ---
     health_url_techbuddy: str = "http://techbuddy-backend.techbuddy.svc.cluster.local:8000/api/v1/health"
-    health_url_servicedesk: str = "http://servicedesk.servicedesk.svc.cluster.local:8000/api/v1/health"
-    health_url_keycloak: str = "http://keycloak-http.keycloak.svc.cluster.local:8080/health/ready"
     health_url_moodle: str = "http://moodle.moodle.svc.cluster.local:8080/admin/tool/health/"
     health_url_nextcloud: str = "http://nextcloud.nextcloud.svc.cluster.local:8080/status.php"
     health_url_stalwart: str = "http://stalwart.stalwart.svc.cluster.local:8080/healthz"
+    health_url_authentik: str = "http://authentik-server.tozsamosc.svc.cluster.local:9000/-/health/ready/"
     health_url_argocd: str = "http://argocd-server.argocd.svc.cluster.local:8080/healthz"
     health_url_grafana: str = "http://grafana.monitoring.svc.cluster.local:3000/api/health"
 

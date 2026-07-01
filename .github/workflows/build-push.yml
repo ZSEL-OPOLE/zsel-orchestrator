@@ -23,6 +23,7 @@ env:
   IMAGE_NAME: zsel/orchestrator
   GITOPS_REPO: ZSEL-OPOLE/gitops-infra
   GITOPS_MANIFEST: 06-apps/manifests/zsel-orchestrator/orchestrator.yaml
+  GITOPS_MANIFEST_SENTINEL: 06-apps/manifests/sentinel/deployment.yaml
 
 jobs:
 
@@ -153,22 +154,23 @@ jobs:
         if: steps.pat.outputs.skip != 'true'
         run: |
           TAG="${{ needs.build.outputs.tag }}"
-          FILE="${{ env.GITOPS_MANIFEST }}"
+          SED_EXPR="s|image: .*${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:.*|image: ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}|g"
 
-          if [ ! -f "$FILE" ]; then
-            echo "WARN: $FILE nie istnieje w gitops-infra — pomin gitops update"
-            exit 0
-          fi
-
-          sed -i "s|image: .*${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:.*|image: ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}|g" "$FILE"
-          echo "OK: ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          for FILE in "${{ env.GITOPS_MANIFEST }}" "${{ env.GITOPS_MANIFEST_SENTINEL }}"; do
+            if [ ! -f "$FILE" ]; then
+              echo "WARN: $FILE nie istnieje — pomiń"
+              continue
+            fi
+            sed -i "$SED_EXPR" "$FILE"
+            echo "OK: $FILE → ${{ env.ZOT_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          done
 
       - name: Commit & push
         if: steps.pat.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${{ env.GITOPS_MANIFEST }}" 2>/dev/null || true
+          git add "${{ env.GITOPS_MANIFEST }}" "${{ env.GITOPS_MANIFEST_SENTINEL }}" 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu"
           else
